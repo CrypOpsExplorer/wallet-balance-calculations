@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
-Solana Balance Watch
+Solana Balance Watch / Rebate Calculation
 
 Features:
-1) One-off balance snapshot
+1) One-off SOL balance snapshot
 2) Weekly snapshots (every Monday at 00:00 UTC)
 3) Per-epoch snapshots (~48h interval)
 4) Compute balance change since any ISO‑8601 timestamp
-
-Usage:
-    pip install solana apscheduler
-    rebatecalculation.py
+5) Prompt for a custom RPC endpoint (e.g. Alchemy URL)
 """
 
-import argparse
 import csv
 import datetime
 import os
@@ -23,11 +19,11 @@ from solana.rpc.api import Client
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 # ── CONFIG ──────────────────────────────────────────────────────────────
-RPC_ENDPOINT = "https://api.mainnet-beta.solana.com"
-CSV_FILE     = "balance_snapshots.csv"
+DEFAULT_RPC = "https://api.mainnet-beta.solana.com"
+CSV_FILE    = "balance_snapshots.csv"
 # ─────────────────────────────────────────────────────────────────────────
 
-client = Client(RPC_ENDPOINT)
+client = None  # will be set in interactive_menu()
 
 def get_balance(sol_address: str) -> float:
     """Return SOL balance (as float) for the given wallet."""
@@ -49,7 +45,6 @@ def record_snapshot(address: str):
 
 def diff_since(address: str, iso_timestamp: str):
     """Compute balance change since the nearest logged snapshot."""
-    # Load snapshots
     try:
         with open(CSV_FILE) as f:
             rows = list(csv.reader(f))
@@ -57,17 +52,14 @@ def diff_since(address: str, iso_timestamp: str):
         print(f"No snapshots found ({CSV_FILE} missing).")
         return
 
-    # Parse target time
     target = datetime.datetime.fromisoformat(iso_timestamp)
-    # Parse CSV rows (skip header)
-    parsed = []
+    snapshots = []
     for ts_str, bal_str in rows[1:]:
-        ts = datetime.datetime.fromisoformat(ts_str)
+        ts  = datetime.datetime.fromisoformat(ts_str)
         bal = float(bal_str)
-        parsed.append((ts, bal))
+        snapshots.append((ts, bal))
 
-    # Find closest snapshot
-    closest_time, closest_balance = min(parsed, key=lambda x: abs(x[0] - target))
+    closest_time, closest_balance = min(snapshots, key=lambda x: abs(x[0] - target))
     current_balance = get_balance(address)
     delta = current_balance - closest_balance
 
@@ -105,8 +97,13 @@ def schedule_snapshots(address: str, frequency: str):
         print("Scheduler stopped.")
 
 def interactive_menu():
-    """Simple CLI menu to choose functionality."""
+    """CLI menu to choose functionality, including custom RPC."""
+    global client
+
     print("=== Solana Balance Watch ===")
+    rpc_input = input(f"Enter RPC endpoint [default: {DEFAULT_RPC}]: ").strip()
+    client    = Client(rpc_input or DEFAULT_RPC)
+
     address = input("Enter Solana wallet address: ").strip()
     if not address:
         print("Wallet address is required. Exiting.")
@@ -121,17 +118,13 @@ def interactive_menu():
 
     if choice == "1":
         record_snapshot(address)
-
     elif choice == "2":
         schedule_snapshots(address, "weekly")
-
     elif choice == "3":
         schedule_snapshots(address, "epoch")
-
     elif choice == "4":
-        ts = input("Enter ISO-8601 timestamp (e.g., 2025-07-15T12:00:00+00:00): ").strip()
+        ts = input("Enter ISO‑8601 timestamp (e.g., 2025-07-15T12:00:00+00:00): ").strip()
         diff_since(address, ts)
-
     else:
         print("Invalid choice. Exiting.")
 
